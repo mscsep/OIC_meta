@@ -1,0 +1,298 @@
+---
+title: "Meta-analysis of the rodent object-in-context task: Random-Effects meta-analysis"
+author: "Milou Sep"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+# This code is adapted from Bonapersona, V. (2019, May 20). The behavioral phenotype of early life adversity: a 3-level meta-analysis of rodent studies. Retrieved from osf.io/ra947
+
+# Prepare Environment
+```{r setup, include=FALSE}
+rm(list = ls()) #clean environment
+# packages
+library(dplyr)
+library(readxl)
+library(osfr)
+library(metafor) # for escalc() & random-effects meta-analysis
+library(ggplot2) # visualizations
+# to check which packages are loaded
+ # (.packages())
+```
+
+# Load data (RoB from osf)
+```{r load data, include=FALSE}
+readRDS("processed_data/cleaned_data.RDS")->meta.data
+# RoB data (for sensitivity analyses)
+osf_retrieve_file("qadch") %>% osf_download(path = "data", conflicts="overwrite")
+read_excel("data/280121_Data_Extraction_RoB.xlsx", sheet = "RoB", na=c("N/A", "#VALUE!"), skip=2)->rob.data
+```
+
+# Check missing values
+```{r check missings}
+# change values to numeric
+l1<-c("DR_A","SEM_DR_A", "nC")
+meta.data %>% mutate(., across(.cols=all_of(l1), .funs=as.numeric))->data4
+# str(data4)
+
+# check missing values (should be non)
+which(is.na(data4$DR_A))
+which(is.na(data4$SEM_DR_A))
+which(is.na(data4$nC))
+
+## remove missing values
+data4[complete.cases(data4[,c("DR_A","SEM_DR_A", "nC")]),]->data5
+```
+
+# Descriptives
+
+## Count unique animals
+```{r unique animals}
+data5 %>% 
+  distinct(ID, .keep_all = TRUE) %>% 
+  tally(nC)
+```
+
+## Count number of unique animals (per species and sex)
+```{r species and sex}
+data5 %>% 
+  distinct(ID, .keep_all = TRUE) %>% 
+    group_by(Species) %>%
+  tally(nC)
+# % Mice
+(72.5/811)*100
+
+data5 %>% 
+  distinct(ID, .keep_all = TRUE) %>% 
+   group_by(Sex) %>%
+  tally(nC)
+# % Male
+(540/811)*100
+```
+
+## Count number of unique studies
+```{r unique studies}
+data5 %>% 
+  distinct(PMID, .keep_all = TRUE) %>% 
+ nrow() # n=37
+```
+
+## Calculate Raw Mean
+
+"Measures for Quantitative Variables.
+The goal of a meta-analysis may also be to characterize individual groups, where the response, characteristic, or dependent variable assessed in the individual studies is measured on some quantitative scale. In the simplest case, the raw mean for the quantitative variable is reported for each group, which then becomes the observed outcome for the meta-analysis. Here, one needs to specify mi, sdi, and ni for the observed means, the observed standard deviations, and the sample sizes, respectively. The only option for the measure argument is then: "MN" for the raw mean. Note that sdi is used to specify the standard deviations of the observed values of the response, characteristic, or dependent variable and not the standard errors of the means."
+https://www.rdocumentation.org/packages/metafor/versions/1.9-9/topics/escalc
+
+```{r raw mean}
+# calculate SD from SEM
+data5$SD <-  data5$SEM_DR_A * sqrt(data5$nC)
+
+# calculate raw mean
+escalc("MN", 
+       mi= DR_A,  
+       sdi = SD,
+       ni = nC,
+       data=data5) -> data6
+# NOTE effect size is identical to DR_A, SD & N used to determine sampling variance (vi)
+
+# check missing values (should be non)
+which(is.na(data6$DR_A))
+which(is.na(data6$SEM_DR_A))
+which(is.na(data6$nC))
+which(is.na(data6$SD))
+```
+
+# Random-effects meta-analysis (using metafor): Overall effect
+```{r random-effects meta-analysis}
+mod1 <- rma.mv(yi, vi,
+               random = list(~1 | PMID, ~1 | EXP_group),
+               method = "REML",
+               slab = label,
+               data = data6) 
+summary(mod1) # https://www.rdocumentation.org/packages/metafor/versions/2.4-0/topics/rma.mv
+```
+
+## Forest plot (ordered by year)
+```{r forestplot meta-analysis}
+tiff(file="results/forest_year.tiff", height=2500, width=900, pointsize = 8, res=300)
+forest(mod1, cex=0.7, xlab = "mean DR", order = order(data6$Year))
+dev.off()
+# https://sakaluk.wordpress.com/2016/02/16/7-make-it-pretty-plots-for-meta-analysis/
+```
+
+## Required sample size future studies
+
+### Calculate SD & Cohen's d
+
+SE = (upper limit 95%CI – lower limit 95% CI) / 3.92  ( https://training.cochrane.org/handbook/current/chapter-06)
+SD = SE * √n 
+n=37 (included in meta-analysis)
+
+SE
+```{r}
+(0.3101 - 0.2057) / 3.92 # 0.02663265 (note, indeed same as SE above)
+```
+
+SD based n= unique animals
+```{r}
+sqrt(856.5)* 0.0266   # 0.7784762
+```
+
+Cohen's d: (mean H1 - mean H0) / SD
+H0: mu - mu0 = 0
+H1: mu - mu0 not 0
+```{r}
+(0.2579 - 0 ) / 0.7784762
+(0.2579 - 0 ) / 0.7785
+```
+
+### Cohen's d entered in g*power to calculate the number of animals required per group, to detect a difference from 0,
+Results: Wednesday, February 17, 2021 -- 12:50:46
+
+t tests - Means: Difference from constant (one sample case)
+
+Analysis:	A priori: Compute required sample size 
+Input:		Tail(s)                       	=	One
+			Effect size d                 	=	0,3312882
+			α err prob                    	=	0,05
+			Power (1-β err prob)          	=	0,8
+Output:		Noncentrality parameter δ     	=	2,5230158
+			Critical t                    	=	1,6720289
+			Df                            	=	57
+			Total sample size             	=	58
+			Actual power                  	=	0,8017895
+
+
+## Diagnostics random-effects meta-analysis
+
+## Heterogeneity (I^2)
+```{r I2}
+# http://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate
+dat=data6
+W <- diag(1/dat$vi)
+X <- model.matrix(mod1)
+P <- W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
+100 * sum(mod1$sigma2) / (sum(mod1$sigma2) + (mod1$k-mod1$p)/sum(diag(P)))
+
+# between & within variance
+100 * mod1$sigma2 / (sum(mod1$sigma2) + (mod1$k-mod1$p)/sum(diag(P)))
+```
+
+## PublicationBias 
+
+### Funnel plot
+```{r funnel plot}
+tiff(file="results/funnel.colours.tiff", height=1500, width=1500, pointsize=8, res=300)
+funnel(mod1, legend = F, col=data6$PMID, back = 'white',xlab='mean DR')
+abline(v=0)
+dev.off()
+```
+
+### Egger's regression random effects (mixed not available)
+```{r publication bias egger}
+#random effects model for evaluation of publication bias
+modRanEff <- rma.uni(yi, vi,
+                     method = "REML",
+                     digits = 3,
+                     data = data6)
+Egger <- regtest(modRanEff, ret.fit = TRUE) 
+Egger
+```
+
+### Begg's test
+```{r publication bias begg's}
+beggs <- regtest(dat$yi, dat$vi)
+beggs
+```
+
+### file drawer analysis (fail and safe)
+```{r publication bias file drawer}
+fsn <- fsn(yi = yi, vi = vi, 
+           data = data6, type = "Rosenthal")
+fsn
+```
+
+### trim and fill
+```{r publication bias trim and fill}
+trimfill(modRanEff) -> trimfill.mod
+trimfill.mod
+```
+
+
+# Sensitivity analyses
+
+## Sensitivity analysis 1: is study quality a moderator?
+```{r}
+rob.data %>% 
+  select(PMID, Total) %>% 
+  mutate(PMID=as.factor(PMID)) %>%
+  rename(., quality=Total)-> study.quality
+
+left_join(data6, study.quality, by="PMID")->sensitivity.data
+
+# inspect study quality
+summary(sensitivity.data$quality)
+sd(sensitivity.data$quality)
+
+# plot study quality summary score
+ggplot(sensitivity.data) +
+  geom_point(aes(x=PMID, y=quality)) +
+  theme_classic() +
+  labs(x="PMID",
+       y="Quality Score") +
+  scale_x_discrete(breaks=NULL)
+# save plot
+ggsave("results/study.quality.jpeg", width=4,height = 4)
+
+# study quality as moderator?
+mod.sens <- rma.mv(yi, vi,
+               random = list(~1 | PMID, ~1 | EXP_group),
+               method = "REML",
+                mods = ~quality,
+               slab = label,
+               data = sensitivity.data) 
+summary(mod.sens)
+```
+
+## Sensitivity analysis 2: influence of outliers?
+```{r}
+# identification influential cases following Viechtbauer & Cheung (2010)'s definition: "the studentized deleted residual > 1.96" (available in rma.uni model of metafor package)
+
+# visual inspection
+hist(data6$yi, breaks = 50)
+
+# fit rma.uni model
+modRanEff <- rma.uni(yi, vi,
+                     method = "REML",
+                     digits = 3,
+                     data = data6)
+
+# create variable for potential influential cases (inf) & potential outliers (out)
+data6$potInf <- 0
+data6$potOut <- 0 
+
+rstudent(modRanEff)->y 
+influence(modRanEff)->inf # Calculate the influence diagnostics
+
+# No potential outliers that are influential (Viechtbauer & Cheung, 2010) 
+data6[which(inf$is.infl),]$potInf #<- 1 # 0 potential influential cases  
+
+
+# Four potential outliers (according to Tabachnick & Fidell (2013) definition: "z-score above +3.29 or below -3.29")
+data6[which(abs(y$z) > 1.96),]$potOut <- 1 # Values that are potential outliers are scored with 1
+data6 %>% filter(potOut==1) %>% nrow() # 4 potential outliers
+
+# filter data for sensitivity analysis
+data6 %>% filter(potOut!=1) ->data.sens
+mod.sens <- rma.mv(yi, vi,
+               random = list(~1 | PMID, ~1 | EXP_group),
+               method = "REML",
+               slab = label,
+               data = data.sens)
+summary(mod.sens) # same results..
+```
+
+# Save data with raw means
+```{r}
+saveRDS(data6,"processed_data/data_with_effect_size.RDS")
+```

@@ -1,0 +1,363 @@
+---
+title: "Meta-analysis of the rodent object-in-context task: prepare data"
+author: "Milou Sep"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    number_sections: yes
+    df_print: kable
+editor_options: 
+  chunk_output_type: console
+---
+
+# prepare environment
+```{r setup, include=FALSE}
+rm(list = ls()) #clean environment
+# packages
+library(readxl)
+library(dplyr)
+library(osfr)
+```
+
+# download from OSF & load data
+```{r}
+osf_retrieve_file("qadch") %>% osf_download(path = "data", conflicts="overwrite")
+# load data
+read_excel("data/280121_Data_Extraction_RoB.xlsx", sheet = "Extraction_converted", na=c("N/A", "#VALUE!"))->data
+#  check empty rows?
+which(rowSums(is.na(data) ) == ncol(data))
+```
+
+# Rename variables
+```{r rename}
+data %>% rename(
+  DR_B=`DR_B_n/(f+n)`, 
+  DR_A=`DR_A_(n-f)/(n+f)`,
+  Prev.Exp = PrevExp,
+  Prev.OR = Prev_OR,
+  Type.Control = TypeCntrl,
+  Context.Floor = C_Floor,
+  Context.Wall = C_Walls,
+  Context.Room = C_Rooms,
+  Context.Size.A = Box_Size_A,
+  Context.Size.B = Box_Size_B,
+  Context.Shape = B_shapes,
+  Object.Material = O_Mat,
+  Object.Size = O_Size,
+  Object.Position = O_Position,
+  Context.Habituation.Freq = H_BoxesFreq,
+  Object.Habituation = H_Object,
+  Testroom.Habituation = H_Testroom,
+  Transport.Habituation = H_Transport,
+  Habituation.with.Cagemates = H_mates,
+  Habituation.Time.Trial = `H_Time(min)_per_trial`,
+  Habituation.Time.Total.Context = `H_Time_Total_per_Box`,
+  
+  # Values below will be recalculated after missing are corrected (see section "recreate sumscores")
+  # Arousal.Prior = Arousal_Score,
+  # Context.Difference.Score = Context_Score,
+  # Arousal.Task.Habituation = Hab_Arousal_Score,
+  # Arousal.Total = Total_Arousal_Score, # idem
+  
+  Learning.Time.Trial = L_Time_per_box,
+  Learning.Learning.Delay = L_retention,
+  Learning.Order.Counterbalanced = L_counter,
+  Learning.Exploration.Time.A = L_Expl_boxA,
+  Learning.Exploration.Time.B = L_Expl_boxB,
+  Learning.Exploration.Time.Total = L_Expl_tot,
+  Learning.Memory.Delay = Retention,
+  Memory.Time.Trial = M_Time,
+  Memory.Exploration.Time.A = M_Expl_boxA,
+  Memory.Exploration.Time.B = M_Expl_boxB,
+  Memory.Exploration.Time.Familiar = M_In_ctxt,
+  Memory.Exploration.Time.New = M_Out_ctxt,
+  Memory.Exploration.Time.Total = M_Expl_tot,
+  Context.Order = C_order,
+  DR.Formula=Formula,
+  Memory.Type = `Type_Mem (according to article)`)->df
+# str(df)
+```
+
+- DR_A center is at 0    [*2-1]
+- DR_B center is at 0.5   [*0.5+0.5]
+
+# Create new variables
+```{r rename}
+df %>%
+  mutate(
+    # create unique id
+    ID=paste(PMID, EXP_group,sep="_"),
+    # create first author column
+    Author=gsub("([A-Za-z]+).*", "\\1", Authors)
+  ) %>%
+  mutate(
+    #create label for graph
+    label=paste(Author, Year,sep=" "),
+    # recode scoring program var
+    Program = case_when(
+      grepl("Any", Program) ~ "AnyMaze software",
+      grepl("n.a.", Program) ~ "n.a.",
+      TRUE ~ Program) # "catch all" test see: https://stackoverflow.com/questions/39257820/keep-value-if-not-in-case-when-statement
+  )->data1  
+str(data1)
+```
+
+# Save data for systematic review
+```{r}
+saveRDS(data1, "processed_data/SR_data.RDS")
+```
+
+# Missing values
+
+## Exclude studies with insufficient data for meta-analysis
+Note, these studies will be included in systematic review only
+```{r}
+summary(data1)
+# Select studies with missing values in 'meta-analysis' variables.
+data1 %>% 
+  filter_at(vars(c("nC", "DR", "SEM", "DR_A","DR_B","SEM_DR_A", "SEM_DR_B")), any_vars(is.na(.))) %>%
+  select(PMID) %>%
+  unique()
+# 4 studies missing values are excluded from meta-analysis, but included in systematic review
+
+data1 %>% 
+  filter_at(vars(c("nC", "DR", "SEM", "DR_A","DR_B","SEM_DR_A", "SEM_DR_B")), all_vars(!is.na(.))) %>%
+  select(PMID) %>%
+  unique()
+# 37 studies included in meta-analysis
+
+data1 %>% 
+  filter_at(vars(c("nC", "DR", "SEM", "DR_A","DR_B","SEM_DR_A", "SEM_DR_B")), all_vars(!is.na(.))) -> data_meta
+```
+
+## Exclude variables that have 1/3 missing values, or are non-informative for the meta-analysis
+```{r missing}
+# variables with more than 1/3 missing values
+which(colSums(is.na(data_meta)) > (1/3)*nrow(data_meta)) -> too.much.missing
+# save excluded variables
+names(too.much.missing) %>% write.csv2("results/too.much.missing.vars.csv")
+
+# non-informative variables for meta-analysis
+Variables.to.exclude <- c("Reference (APA)",
+                          "Data_Extracted",
+                          "Authors", "Affiliation",
+                          "Journal", 
+                          "Author",
+                          "Page_outcome", "Page_outcome", "Def_Expl")
+
+data_meta %>% 
+  select(-all_of(too.much.missing)) %>%
+  select(-all_of(Variables.to.exclude)) %>% 
+  droplevels()->data_meta2
+# str(data2)
+```
+
+## Recode factor variable types
+```{r recode factors}
+factors<- c("ID", "PMID", "EXP_group", "no.Affiliation", "Species", "Strain", "Sex", "Age", "DR.Formula", "Memory.Type", "Scoring", "Object.Habituation", "Object.Material", "Context.Shape", "Context.Wall", "Context.Floor", "RevRhythm", "Housing", "AdLib", "Type.Control", "Prev.OR", "Prev.Exp", "Origin", "Habituation.with.Cagemates", "Program", "Learning.Order.Counterbalanced","Context.Order", "SmellCntrl")
+data_meta2 %>% 
+  mutate_at(., factors, as.character) %>% 
+  mutate_at(., factors, factor) -> data_meta3 
+# str(data_meta3)
+```
+
+## Fix missing values (in variables with less then 1/3 missing): 
+Missing values are replaced by median value (for numeric) of most prevalent category (for factors)
+NOTE. Strain (3 missing values) is dependent upon Species, missing values are replaced by 'species-specific' median.
+```{r fix missing values}
+# check missing values
+summary(data_meta3)
+
+factors.to.fix <- c("Sex", "Origin", "Age", "Prev.Exp", "Prev.OR", "AdLib", "Housing", "RevRhythm", "Context.Floor", "Context.Wall", "Context.Shape","Context.Room", "Habituation.with.Cagemates", "Program", "Object.Material", "Object.Habituation", "Learning.Order.Counterbalanced", "Context.Order", "Scoring", "SmellCntrl", "Memory.Type")
+
+numeric.to.fix <- c( "Context.Size.A", "Context.Size.B","Context.Habituation.Freq", "Habituation.Time.Trial", "Habituation.Time.Total.Context", "Learning.Learning.Delay", "Memory.Time.Trial", "Learning.Memory.Delay")
+
+# change character to numeric
+data_meta3$Habituation.Time.Trial<-as.numeric(data_meta3$Habituation.Time.Trial)
+
+for (i in c(1:length(numeric.to.fix))) {
+  numeric.to.fix[[i]] -> varname
+  data_meta3[is.na(data_meta3[,varname]),varname] <- median(unlist(data_meta3[,varname]), na.rm = T)
+}
+
+# categorical missing: substitute with most common category
+categorical_mode <- function(x){
+  names(table(x))[which.max(table(x))]
+}
+
+for (i in c(1:length(factors.to.fix))) {
+  factors.to.fix[[i]] -> varname
+  data_meta3[is.na(data_meta3[,varname]),varname] <- categorical_mode(unlist(data_meta3[,varname]))
+}
+
+# for checking
+summary(data_meta3)
+any(is.na(data_meta3))
+
+
+# define median mice
+data_meta3 %>% filter(Species == "Mice") %>% select("Strain") %>% unlist() %>% categorical_mode() -> median.mice
+# Define median rat
+data_meta3 %>% filter(Species == "Rat") %>% select("Strain") %>% unlist() %>% categorical_mode() -> median.rat
+
+# for checking
+data_meta3 %>% filter (is.na(Strain) & (Species == "Rat") ) #1
+data_meta3 %>% filter (is.na(Strain) & (Species == "Mice") ) #2
+
+# replace missing values with species specific median
+data_meta3 %>% mutate(
+  Strain = case_when(
+    # !is.na(Strain) ~ Strain,
+    is.na(Strain) & (Species == "Rat") ~ median.rat,
+    is.na(Strain) & (Species == "Mice") ~ median.mice,
+    TRUE ~ as.character(Strain))
+) -> data_meta4
+
+# for checking
+any(is.na(data_meta4))
+
+# count missing without meta-analysis variables and no.affiliation
+data_meta4 %>% 
+  select(-c(no.Affiliation, nC, DR, SEM, DR_A, DR_B, SEM_DR_A, SEM_DR_B)) %>% #View()
+  is.na(.) %>% #View()
+  any() # no missing values
+
+summary(data_meta4)
+```
+
+# Recreate sumscores (after missing corrections)
+The original object score was created by  "Object_Score = Object.Material2 + Object.Size2". But Object.Size is removed from analysis dataset, because there were too much missing values. Note, there is no object sum score created, as this would be identical to Object.Material.
+
+The variables  Handling, Transport.Habituation2, Transport.Habituation, Testroom.Habituation were also excluded because there were too much missing values. These variable were therefor not included 
+```{r}
+summary(data_meta4)
+
+data_meta4 %>%
+  mutate(
+    # for arousal score
+    Origin2 = case_when(
+      Origin == "B" ~ 0,
+      Origin == "P" ~ 1),
+    Prev.Exp2 = case_when(
+      Prev.Exp == "No" ~ 0,
+      Prev.Exp == "Yes" ~ 1),
+    Prev.OR2 = case_when(
+      Prev.OR == "No" ~ 1,
+      Prev.OR == "Yes" ~ 0),
+    Type.Control2 = case_when(
+      Type.Control == "U" ~ 0,
+      Type.Control == "SI" ~ 1,
+      Type.Control == "SO" ~ 2,),
+    AdLib2 = case_when(
+      AdLib == "Yes" ~ 0,
+      AdLib == "No" ~ 1),
+    RevRhythm2 = case_when(
+      RevRhythm == "Yes" ~ 0,
+      RevRhythm == "No" ~ 1),
+    Housing2 = case_when(
+      Housing == "G" ~ 0,
+      Housing == "S" ~ 1),
+    Arousal.Prior = Origin2 + Prev.Exp2 + Prev.OR2 + Type.Control2 + AdLib2 + RevRhythm2 + Housing2,
+    
+    # Context.Difference.Score
+    Context.Floor2 = case_when(
+      Context.Floor == "Different" ~ 4,
+      Context.Floor == "Similar" ~ 0), # if no match, case_when() creates NA
+    Context.Wall2 = case_when(
+      Context.Wall == "Different" ~ 3,
+      Context.Wall == "Similar" ~ 0),
+    Context.Room2 = case_when(
+      Context.Room == "Different" ~ 1,
+      Context.Room == "Similar" ~ 0),
+    Context.Shape2 = case_when(
+      Context.Shape == "Different" ~ 1,
+      Context.Shape == "Similar" ~ 0),
+    Context.Difference.Score = Context.Floor2 + Context.Wall2 + Context.Room2 + Context.Shape2,
+    
+    # Object score (excluded, too much missing values)
+    # Object.Material2 = case_when(
+    #   Object.Material == "Different" ~ 1,
+    #   Object.Material == "Similar" ~ 0),
+    # Object.Size2 = case_when(
+    #   Object.Size == "Different" ~ 1,
+    #   Object.Size == "Similar" ~ 0),
+    # Object_Score = Object.Material2 + Object.Size2,
+    
+    # Arousal.Task.Habituation (commented variables were excluded from data, too much missing values)
+    # Handling2 = case_when(
+    #   Handling == "Yes" ~ 0,
+    #   Handling == "No" ~ 1),
+    # Testroom.Habituation2 = case_when(
+    #   Testroom.Habituation == "Yes" ~ 0,
+    #   Testroom.Habituation == "No" ~ 1),
+    # Transport.Habituation2 = case_when(
+    #   Transport.Habituation == "Yes" ~ 0,
+    #   Transport.Habituation == "No" ~ 1),
+    Context.Habituation.Freq2 = case_when(
+      Context.Habituation.Freq == 0 ~ 1,
+      Context.Habituation.Freq > 0 ~ 0),             
+    Habituation.with.Cagemates2 = case_when(
+      Habituation.with.Cagemates == "Yes" ~ 0,
+      Habituation.with.Cagemates == "Partly" ~ 0,
+      Habituation.with.Cagemates == "n.a." ~ 0, # Note: n.a scored when, for example, when no habituation was performed
+      Habituation.with.Cagemates == "No" ~ 1),
+    # Transport.Habituation2 = case_when(
+    #   Transport.Habituation == "Yes" ~ 0,
+    #   Transport.Habituation == "Partly" ~ 0,
+    #   Transport.Habituation == "No" ~ 1),   
+    Object.Habituation2 = case_when(
+      Object.Habituation == "Yes" ~ 0,
+      Object.Habituation == "Partly" ~ 0,
+      Object.Habituation == "n.a." ~ 0, # Note: n.a scored when, for example, when no habituation was performed
+      Object.Habituation == "No" ~ 1 ), 
+    Arousal.Task.Habituation = # Handling2 + Testroom.Habituation2 + Transport.Habituation2 + #Transport.Habituation2+
+      Context.Habituation.Freq2 + Habituation.with.Cagemates2 + Object.Habituation2, # higher score more arousal
+    
+    # Total arousal        
+    Arousal.Total = Arousal.Prior + Arousal.Task.Habituation)  %>%
+  # remove helper/intermediate variables (created above)
+  select(-c(Context.Habituation.Freq2, Object.Habituation2,Context.Habituation.Freq2, Habituation.with.Cagemates2, Context.Floor2, Context.Wall2, Context.Room2, Context.Shape2, Origin2 , Prev.Exp2 , Prev.OR2, Type.Control2 , AdLib2 , RevRhythm2, Housing2)
+  )-> data_meta5
+```
+
+# Change order and names of factor levels
+For readability of the MetaForest follow-up plots
+```{r}
+data_meta5 %>%
+  mutate(
+    Memory.Type = factor(Memory.Type, 
+                         levels=c("STM", 'medium', "LTM")),
+    DR.Formula = factor(DR.Formula, 
+                        levels = c("(tnew-tfamiliar)/(tnew+tfamiliar)", "[(tnew-tfamiliar)/(tnew+tfamiliar)]*100",
+                                   "(tnew)/(tnew+tfamiliar)",  "[(tnew)/(tnew+tfamiliar)]*100"),
+                        labels = c("n-f/t", "n-f/t*100", 
+                                   "n/t", "n/t*100")),
+    Strain = factor(Strain, 
+                    levels = c(
+                      # mice
+                      "Tg(Sim1cre)KH21Gsat/Mmucd", "Sv/Ev mice", "ICR", "C57BL/6",
+                      # rats
+                      "Lister hooded rats", "Long-Evans rats", "Sprague-Dawley", "Wistar rats", "pigmented DA strain", "Dark Agouti rats"),
+                    labels = c(
+                      # mice
+                      "TMm", "SEm", "ICm", "BLm",
+                      # rats
+                      "LHr", "LEr", "SDr", "Wr", "pDr", "DAr")
+                    ),
+    Age = factor(Age, 
+                 levels = c("Juvenile", "Adolescent", "Adult", "Senior")),
+    Type.Control = factor(Type.Control, 
+                          levels = c("U", "SI", "SO")),
+    Program = factor(Program, 
+                     levels = c("AnyMaze software", "Ethovision XT (Noldus)", 
+                                "Med-PCIV software", "Topscan", "Limelight2 program (Actimetrics; Coubourn Instruments)", "n.a."),
+                     labels = c("Any", "Eth",
+                                "Med", "Top", "LLP", "non"))) %>% 
+  droplevels() ->data_meta6
+```
+
+# Save processed data
+```{r}
+saveRDS(data_meta6, "processed_data/cleaned_data.RDS")
+```

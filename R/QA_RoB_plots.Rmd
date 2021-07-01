@@ -1,0 +1,113 @@
+---
+title: "Meta-analysis of the rodent object-in-context task: Study Quality and Risk of Bias"
+author: "Milou Sep"
+date: "2/16/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Prepare environment
+```{r}
+rm(list = ls()) #clean environment
+# packages
+library(dplyr)
+library(readxl)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+# devtools::install_github("liamgilbey/ggwaffle")
+library(ggwaffle)
+library(RColorBrewer)
+```
+
+# Load data
+```{r}
+# load data
+readRDS("processed_data/cleaned_data.RDS")->meta.data
+# RoB data (for sensitivity analyses)
+read_excel("data/280121_Data_Extraction_RoB.xlsx", sheet = "RoB", na=c("N/A", "#VALUE!"), skip=2)->rob.data
+str(rob.data)
+```
+
+# Data to long format
+```{r}
+pivot_longer(
+  data = rob.data,
+  cols = c(
+    # items from SYRCLE’s risk of bias
+    `Sequence generation`,
+    `Baseline characteristics`,
+    `Allocation concealment`,
+    `Random housing`,
+    `Random outcome assessment`,
+    `Blinding intervention`,
+    `Blinding (analysis)`,
+    `Incomplete outcome data`,
+    `Selective outcome reporting`,
+    # extra items
+    `IOR`, # Inter-observer-rate
+    `Sample size calculation`),
+  names_to = "item",
+  values_to = "rob") %>%
+  mutate(
+    item = factor(
+      item,
+      levels = c(
+        "Sample size calculation",
+        "IOR",
+        "Selective outcome reporting",
+        "Incomplete outcome data",
+        "Blinding (analysis)",
+        "Random outcome assessment",
+        "Blinding intervention",
+        "Random housing",
+        "Allocation concealment",
+        "Baseline characteristics",
+        "Sequence generation"),
+      labels = c(
+        "Sample size calculation",
+        "Inter-observer rate",
+        "SYRCLE’s RoB tool: Selective outcome reporting",
+        "SYRCLE’s RoB tool: Incomplete outcome data",
+        "SYRCLE’s RoB tool: Blinding (analysis)",
+        "SYRCLE’s RoB tool: Random outcome assessment",
+        "SYRCLE’s RoB tool: Blinding intervention",
+        "SYRCLE’s RoB tool: Random housing",
+        "SYRCLE’s RoB tool: Allocation concealment",
+        "SYRCLE’s RoB tool: Baseline characteristics",
+        "SYRCLE’s RoB tool: Sequence generation")),
+    rob = factor(
+      rob,
+      levels = c("yes", "unclear", "no", "n.a."),
+      labels = c("Yes", "Unclear",  "No", "not applicable"))
+  ) -> rob_long
+# str(rob_long)
+```
+
+for checking:
+```{r}
+length(unique(rob_long$PMID))
+```
+QA/RoB for 41 studies. That is correct, i.e. all papers in systematic review have been assessed for QA.
+
+# Waffle plot
+```{r}
+ggplot(data = rob_long, aes(y = item, x = factor(PMID),fill= rob)) +
+  geom_waffle() +
+  scale_fill_brewer(palette="Accent", direction=1) +
+  theme_minimal() +
+  labs(
+    # title = "Study Quality Assessment (QA), including SYRCLE's risk of bias (RoB) tool", # title removed and added to manuscript caption
+    fill = "Measures taken to reduce bias?",
+    y="",
+    x = "Studies (PMID)") +
+  theme(legend.position="top")+
+  theme(axis.text.x = element_text(angle = 90)) ->waffel.plot
+waffel.plot
+```
+Note, the n/a in 'allocation concealment' is correct, that study was a single group experiment.
+
+```{r}
+ggsave( "results/QA_ROB.tiff", waffel.plot, width = 9, height = 3,dpi = 300,limitsize = TRUE)
+```

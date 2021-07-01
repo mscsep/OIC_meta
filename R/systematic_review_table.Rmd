@@ -1,0 +1,124 @@
+---
+title: "Meta-analysis of the rodent object-in-context task: Systematic Review Table"
+author: "Milou Sep"
+date: "1/25/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Prepare environment
+```{r setup, include=FALSE}
+rm(list = ls()) #clean environment
+# packages
+library(dplyr)
+# install.packages("gtsummary")  
+library(gtsummary) #https://education.rstudio.com/blog/2020/07/gtsummary/
+library(flextable)
+library(officer)
+```
+
+# Load processed data
+```{r load data}
+readRDS( "processed_data/SR_data.RDS") ->df
+```
+
+# Select variables for systematic review table
+```{r}
+df  %>% 
+  select(nC,
+         # animal factors
+         Species, Strain, Sex, Origin, Age, Type.Control, Housing, RevRhythm, Prev.Exp, Prev.OR, AdLib, Handling,
+         # set-up related factors
+         Context.Floor, Context.Wall, Context.Shape, Context.Room, Context.Size.A , Context.Size.B, Object.Material, Object.Size,  Context.Order,
+         # Task procedures related factors
+         Transport.Habituation, Testroom.Habituation, Habituation.with.Cagemates, Context.Habituation.Freq, Habituation.Time.Trial, Habituation.Time.Total.Context, Object.Habituation, Learning.Time.Trial, Learning.Learning.Delay, Learning.Order.Counterbalanced, Learning.Exploration.Time.A, Learning.Exploration.Time.B, Learning.Exploration.Time.Total, Learning.Memory.Delay, Memory.Time.Trial, Memory.Exploration.Time.A, Memory.Exploration.Time.B, Memory.Exploration.Time.Familiar, Memory.Exploration.Time.New, Memory.Exploration.Time.Total,
+         # other
+         SmellCntrl, ReuseBedding, Scoring, Observers, Program, DR.Formula
+  ) -> df_sum
+
+str(df_sum)
+```
+
+# Assign correct variable types
+```{r}
+df_sum %>%
+  mutate(
+    Habituation.Time.Trial=as.numeric(Habituation.Time.Trial),
+    Sex = factor(Sex,
+                 levels=c("F", "M", "Both"),
+                 labels = c("Female", "Male", "Mixed")),
+    Origin = factor(Origin,
+                    levels=c("B", "P"),
+                    labels = c("In-house breeding", "Supplier")),
+    Type.Control = factor(Type.Control,
+                          levels=c("U", "SI", "SO"),
+                          labels = c("Undisturbed", "Sham injection", "Sham surgery")),
+    Housing = factor(Housing,
+                     levels = c("G", "S"),
+                     labels = c("Group", "Single"))
+  )->df_sum2
+```
+
+
+# Create summary table
+some info:
+- http://www.danieldsjoberg.com/gtsummary/articles/global_options.html
+- http://www.danieldsjoberg.com/gtsummary/articles/themes.html
+```{r}
+df_sum2 %>%
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ "{min} - {max}; {median}; {mean} ({sd})",
+      all_categorical() ~ "{n} / {N} ({p}%)"), 
+    type= list(
+      Context.Habituation.Freq ~"continuous",
+      Habituation.Time.Trial ~"continuous",
+      Learning.Time.Trial ~ "continuous",
+      Memory.Time.Trial ~ "continuous",
+      Memory.Exploration.Time.A ~ "continuous",
+      Memory.Exploration.Time.B ~ "continuous",
+      Memory.Exploration.Time.Familiar ~ "continuous",
+      Memory.Exploration.Time.New ~ "continuous",
+      all_dichotomous() ~ "categorical"),
+    missing_text="Not reported",
+    label = list(
+      nC ~ "Sample size",
+      RevRhythm ~ "Reversed day/night cycle",
+      AdLib ~ "Ad libitum food & water ",
+      Prev.Exp ~ "Previous experiment",
+      Prev.OR ~ "Previous object recognition task",
+      Learning.Learning.Delay ~ "Learning-Learning Delay (min)",
+      Learning.Time.Trial ~ "Learning Time Trial (min)",
+      Habituation.Time.Trial ~ "Habituation Time Trial (min)",
+      Habituation.Time.Total.Context ~ "Habituation Time Total Context (min)",
+      Learning.Exploration.Time.A ~ "Learning Exploration Time A (sec)",
+      Learning.Exploration.Time.B ~ "Learning Exploration Time B (sec)",
+      Learning.Exploration.Time.Total  ~ "Learning Exploration Total (sec)",
+      Learning.Memory.Delay~ "Learning-Memory Delay (min)",
+      Memory.Time.Trial~ "Memory Time Trial (min)",
+      Memory.Exploration.Time.A~ "Memory Exploration Time A (sec)",
+      Memory.Exploration.Time.B~ "Memory Exploration Time B (sec)",
+      Memory.Exploration.Time.New ~ "Memory Exploration Time New (sec)",
+      Memory.Exploration.Time.Familiar ~ "Memory Exploration Time Familiar (sec)",
+      Memory.Exploration.Time.Total ~ "Memory Exploration Time Total (sec)",
+      SmellCntrl ~ "Smell Control OIC",
+      ReuseBedding ~ "Reuse Bedding OIC", 
+      Program ~ "Scoring Program")
+  ) %>% 
+  bold_labels() -> summary_table
+```
+
+# Convert to flextable
+```{r}
+as_flex_table(summary_table) ->ft
+theme_vanilla(ft) -> ft
+autofit(ft) 
+```
+
+# Export table to word file
+```{r}
+doc <- read_docx()
+doc <- body_add_flextable(doc, value = ft, align="center")
+print(doc, target = paste0("results/Overview_SR.docx"))
+```

@@ -1,0 +1,148 @@
+---
+title: "Meta-analysis of the rodent object-in-context task: Random forest-based Meta-analysis (MetaForest)"
+author: "Milou Sep"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+# Prepare environment
+```{r setup, include=FALSE}
+rm(list = ls()) #clean environment
+# packages
+library(dplyr)
+library(caret) #for cross-validation
+library(metaforest) #for exploratory analysis
+# to check which packages are loaded
+# (.packages())
+```
+
+# Metaforest
+https://www.rdocumentation.org/packages/metaforest/versions/0.1.3
+
+## Data preparation
+```{r metaforest preparation}
+readRDS("processed_data/data_with_effect_size.RDS") ->data6
+str(data6)
+
+# create dataset for MetaForest
+data6 %>% 
+  select( -c(PMID, EXP_group, 
+             SmellCntrl, # only 1 level, so non-informative
+             nC,
+             # other outcome variables
+             DR, DR_A, DR_B, SEM, SEM_DR_A, SEM_DR_B, SD, label,
+             no.Affiliation, # captures mostly the same variation as `PMID` variable (no.Affiliation: 29 levels, PMID: 37 levels)
+             Program # captures mostly the same variation as in the 'scoring' variable.
+  )) %>% 
+  droplevels() -> datForest
+is.na(datForest) %>% any()
+```
+
+## Save data for WS follow-up plots
+```{r save data WS plots}
+data6 %>% select(nC, ID, PMID)->sample.sizes
+full_join(sample.sizes, datForest, by="ID")->datForest_for_WS_Plot
+saveRDS(datForest_for_WS_Plot, "processed_data/datForest_for_WS_Plot.RDS")
+```
+
+## MetaForest: Tuning
+Note, tuning assumes that convergence is reached. To set-up metaforest, also see: https://www.rdocumentation.org/packages/metaforest/versions/0.1.3/topics/ModelInfo_mf
+```{r metaforest tuning}
+set.seed(94372)
+ModelInfo_mf()$notes # information on method from MetaForest
+# Set up 9-fold grouped cross-validation
+fit_control <- trainControl(method = "cv", number = 9, index = groupKFold(datForest$ID, k = 9)) 
+# Set up a custom tuning grid for the three tuning parameters of MetaForest
+rf_grid <- expand.grid(whichweights = c("random", "fixed", "unif"),
+                       mtry = c(2, 4, 6),
+                       min.node.size = c(2, 4, 6))
+```
+
+## MetaForest: Train Model
+Cross-validated clustered MetaForest
+```{r MetaForest training}
+set.seed(94372)
+# Train the model
+cv.mf.cluster <- train(y = datForest$yi, x = datForest[names(datForest) !="yi"],
+                       study = "ID", 
+                       method = ModelInfo_mf(), #= the method from MetaForest. (https://rdrr.io/cran/metaforest/man/MetaForest.html)
+                       trControl = fit_control,
+                       tuneGrid = rf_grid,
+                       num.trees = 600,
+                       data=datForest)
+# Save the model
+saveRDS(cv.mf.cluster,file="processed_data/fitted.MetaForest.RDS")
+```
+
+To load saved model directly
+```{r eval=FALSE, include=FALSE}
+readRDS("processed_data/fitted.MetaForest.RDS")->cv.mf.cluster
+```
+
+## MetaForest: Inspect model
+
+### Tuning parameters
+#### Show model: The final values used for the model were whichweights = unif, mtry = 4 and min.node.size = 2
+```{r inspect model 1}
+cv.mf.cluster
+```
+#### Plot grid parameter models
+```{r inspect model 2}
+plot(cv.mf.cluster)
+```
+
+### Model Summary
+```{r inspect model 3}
+summary(cv.mf.cluster)
+```
+
+### R(oob)
+https://towardsdatascience.com/what-is-out-of-bag-oob-score-in-random-forest-a7fa23d710
+```{r inspect model 4}
+cv.mf.cluster$finalModel
+```
+
+### Cross validated R2 with SD
+details for the "best" model: unif, mtry = 4 and min.node.size = 2
+```{r inspect model 5}
+cv.mf.cluster$results[which(cv.mf.cluster$results$whichweights == "unif" & 
+                              cv.mf.cluster$results$mtry == 4 & 
+                              cv.mf.cluster$results$min.node.size == 2),] 
+```
+
+### Convergence plot
+Good model convergence
+```{r convergence plot}
+jpeg(file="results/metaforest_convergencePlot.jpeg", height = 3000, width = 3000, res=500)
+plot(cv.mf.cluster$finalModel) 
+dev.off()
+```
+
+## Variable importance (based on metaForest)
+```{r variable importance plot}
+tiff(file="results/metaforest_varImportance.tiff", height=1500, width=1500, pointsize=8, res=300)
+VarImpPlot(cv.mf.cluster$finalModel)+
+  geom_hline(yintercept=11.5) +
+  annotate(geom="text", x=0.0017, y=12.5, label="Top 50%", color="darkblue")
+dev.off()
+```
+
+## Export important variables
+```{r metaforest varimportance scores}
+varImp(cv.mf.cluster) ->imp.scores
+
+# Export variable importance scores (ordered) to csv
+imp <- as.data.frame(imp.scores$importance)
+imp <- data.frame(overall = imp$Overall,
+                  names   = rownames(imp))
+write.csv2(imp[order(imp$overall,decreasing = T),],"results/important_variables_metaforest.csv")
+
+# Select top 50% most important variables
+imp[order(imp$overall,decreasing = T),] %>%
+  slice_head(.,n=nrow(.) / 2) -> important.vars 
+important.vars$names ->variable
+variable
+
+# Save top 50% most important variables
+saveRDS(variable,"processed_data/important_variables.RDS")
+```
